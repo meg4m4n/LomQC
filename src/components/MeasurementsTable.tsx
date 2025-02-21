@@ -20,13 +20,13 @@ function MeasurementsTable({
     code: '',
     description: '',
     expectedValue: 0,
-    tolerance: 0,
+    tolerance: 3,
     unit: 'cm',
     size: ''
   });
 
   const handleAddMeasurement = () => {
-    if (!newMeasurement.code || !newMeasurement.description || !newMeasurement.size) return;
+    if (!newMeasurement.code || !newMeasurement.description) return;
 
     onAddMeasurement({
       id: Date.now().toString(),
@@ -34,7 +34,7 @@ function MeasurementsTable({
       description: newMeasurement.description || '',
       expectedValue: newMeasurement.expectedValue || 0,
       actualValue: null,
-      tolerance: newMeasurement.tolerance || 0,
+      tolerance: newMeasurement.tolerance || 3,
       unit: newMeasurement.unit || 'cm',
       size: newMeasurement.size || ''
     });
@@ -43,7 +43,7 @@ function MeasurementsTable({
       code: '',
       description: '',
       expectedValue: 0,
-      tolerance: 0,
+      tolerance: 3,
       unit: 'cm',
       size: ''
     });
@@ -51,46 +51,35 @@ function MeasurementsTable({
 
   const downloadTemplate = () => {
     const ws = XLSX.utils.aoa_to_sheet([
-      ['Sigla', 'Descrição', 'Tamanho', 'Medida (cm)', 'Tolerância (%)'],
-      ['LP', 'Largura Peito', 'M', '50', '3'],
+      ['Sigla', 'Descrição', 'Medida (cm)', 'Tolerância (%)'],
+      ['LP', 'Largura Peito', '50', '3'],
     ]);
     const wb = XLSX.utils.book_new();
     XLSX.utils.book_append_sheet(wb, ws, 'Template');
     XLSX.writeFile(wb, 'template_medidas.xlsx');
   };
 
-  const isWithinTolerance = (expected: number, actual: number | null, tolerance: number) => {
+  const isWithinTolerance = (expected: number, actual: number | null) => {
     if (actual === null) return null;
+    const tolerance = 3; // Fixed 3% tolerance
     const toleranceValue = expected * (tolerance / 100);
     return Math.abs(expected - actual) <= toleranceValue;
   };
 
   const getDifference = (expected: number, actual: number | null) => {
     if (actual === null) return null;
-    return actual - expected;
+    return (actual - expected).toFixed(2);
   };
 
-  const getMeasurementColor = (measurement: Measurement) => {
-    if (!measurement.actualValue) return '';
-    return isWithinTolerance(measurement.expectedValue, measurement.actualValue, measurement.tolerance)
+  const getRowStyle = (measurement: Measurement) => {
+    if (measurement.actualValue === null) return '';
+    return isWithinTolerance(measurement.expectedValue, measurement.actualValue)
       ? 'bg-green-50'
       : 'bg-red-50';
   };
 
-  // Group measurements by size
-  const measurementsBySize = measurements.reduce((acc, measurement) => {
-    const size = measurement.size || 'Sem tamanho';
-    if (!acc[size]) {
-      acc[size] = [];
-    }
-    acc[size].push(measurement);
-    return acc;
-  }, {} as Record<string, Measurement[]>);
-
-  const availableSizes = ['XXS', 'XS', 'S', 'M', 'L', 'XL', 'XXL', 'XXXL'];
-
   return (
-    <div>
+    <div className="w-full">
       <div className="flex justify-between items-center mb-4">
         <button
           onClick={downloadTemplate}
@@ -101,18 +90,15 @@ function MeasurementsTable({
         </button>
       </div>
 
-      <div className="overflow-x-auto">
+      <div className="overflow-x-auto bg-white rounded-lg shadow">
         <table className="min-w-full divide-y divide-gray-200">
           <thead>
-            <tr>
+            <tr className="bg-gray-50">
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Sigla
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Descrição
-              </th>
-              <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                Tamanho
               </th>
               <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                 Medida Pedida
@@ -159,31 +145,6 @@ function MeasurementsTable({
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
-                <select
-                  value={newMeasurement.size || ''}
-                  onChange={(e) =>
-                    setNewMeasurement((prev) => ({ ...prev, size: e.target.value }))
-                  }
-                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                >
-                  <option value="">Selecione</option>
-                  {availableSizes.map(size => (
-                    <option key={size} value={size}>{size}</option>
-                  ))}
-                  <option value="custom">Outro</option>
-                </select>
-                {newMeasurement.size === 'custom' && (
-                  <input
-                    type="text"
-                    placeholder="Digite o tamanho"
-                    className="mt-2 w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                    onChange={(e) =>
-                      setNewMeasurement((prev) => ({ ...prev, size: e.target.value }))
-                    }
-                  />
-                )}
-              </td>
-              <td className="px-6 py-4 whitespace-nowrap">
                 <input
                   type="number"
                   value={newMeasurement.expectedValue || ''}
@@ -201,20 +162,15 @@ function MeasurementsTable({
                   type="number"
                   disabled
                   className="w-full rounded-md border-gray-300 shadow-sm bg-gray-50"
-                  value="0"
+                  value=""
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
                 <input
                   type="number"
-                  value={newMeasurement.tolerance || ''}
-                  onChange={(e) =>
-                    setNewMeasurement((prev) => ({
-                      ...prev,
-                      tolerance: parseFloat(e.target.value),
-                    }))
-                  }
-                  className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                  value={3}
+                  disabled
+                  className="w-full rounded-md border-gray-300 shadow-sm bg-gray-50"
                 />
               </td>
               <td className="px-6 py-4 whitespace-nowrap">
@@ -233,129 +189,93 @@ function MeasurementsTable({
               </td>
             </tr>
 
-            {Object.entries(measurementsBySize).map(([size, sizeMeasurements]) => (
-              <React.Fragment key={size}>
-                <tr className="bg-gray-50">
-                  <td colSpan={9} className="px-6 py-2 text-sm font-medium text-gray-700">
-                    Tamanho: {size}
+            {measurements.map((measurement) => {
+              const difference = getDifference(measurement.expectedValue, measurement.actualValue);
+              const withinTolerance = isWithinTolerance(measurement.expectedValue, measurement.actualValue);
+
+              return (
+                <tr key={measurement.id} className={getRowStyle(measurement)}>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="text"
+                      value={measurement.code}
+                      onChange={(e) =>
+                        onUpdateMeasurement(measurement.id, {
+                          code: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="text"
+                      value={measurement.description}
+                      onChange={(e) =>
+                        onUpdateMeasurement(measurement.id, {
+                          description: e.target.value,
+                        })
+                      }
+                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="number"
+                      value={measurement.expectedValue}
+                      onChange={(e) =>
+                        onUpdateMeasurement(measurement.id, {
+                          expectedValue: parseFloat(e.target.value),
+                        })
+                      }
+                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="number"
+                      value={measurement.actualValue || ''}
+                      onChange={(e) =>
+                        onUpdateMeasurement(measurement.id, {
+                          actualValue: parseFloat(e.target.value),
+                        })
+                      }
+                      className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <input
+                      type="number"
+                      value={3}
+                      disabled
+                      className="w-full rounded-md border-gray-300 shadow-sm bg-gray-50"
+                    />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {difference ? `${difference} cm` : '-'}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm">
+                    {measurement.actualValue !== null && (
+                      <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
+                        withinTolerance
+                          ? 'bg-green-100 text-green-800'
+                          : 'bg-red-100 text-red-800'
+                      }`}>
+                        {withinTolerance ? 'OK' : 'NOK'}
+                      </span>
+                    )}
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <button
+                      onClick={() => onRemoveMeasurement(measurement.id)}
+                      className="text-red-600 hover:text-red-700"
+                    >
+                      <Trash2 size={20} />
+                    </button>
                   </td>
                 </tr>
-                {sizeMeasurements.map((measurement) => {
-                  const withinTolerance = isWithinTolerance(
-                    measurement.expectedValue,
-                    measurement.actualValue,
-                    measurement.tolerance
-                  );
-                  const difference = getDifference(
-                    measurement.expectedValue,
-                    measurement.actualValue
-                  );
-
-                  return (
-                    <tr key={measurement.id} className={getMeasurementColor(measurement)}>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="text"
-                          value={measurement.code}
-                          onChange={(e) =>
-                            onUpdateMeasurement(measurement.id, {
-                              code: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="text"
-                          value={measurement.description}
-                          onChange={(e) =>
-                            onUpdateMeasurement(measurement.id, {
-                              description: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <select
-                          value={measurement.size}
-                          onChange={(e) =>
-                            onUpdateMeasurement(measurement.id, {
-                              size: e.target.value,
-                            })
-                          }
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        >
-                          {availableSizes.map(size => (
-                            <option key={size} value={size}>{size}</option>
-                          ))}
-                          <option value="custom">Outro</option>
-                        </select>
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="number"
-                          value={measurement.expectedValue}
-                          onChange={(e) =>
-                            onUpdateMeasurement(measurement.id, {
-                              expectedValue: parseFloat(e.target.value),
-                            })
-                          }
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="number"
-                          value={measurement.actualValue || ''}
-                          onChange={(e) =>
-                            onUpdateMeasurement(measurement.id, {
-                              actualValue: parseFloat(e.target.value),
-                            })
-                          }
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <input
-                          type="number"
-                          value={measurement.tolerance}
-                          onChange={(e) =>
-                            onUpdateMeasurement(measurement.id, {
-                              tolerance: parseFloat(e.target.value),
-                            })
-                          }
-                          className="w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-                        />
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {difference !== null ? `${difference.toFixed(2)} cm` : '-'}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap text-sm">
-                        {withinTolerance !== null && (
-                          <span className={`px-2 py-1 rounded-full text-xs font-semibold ${
-                            withinTolerance
-                              ? 'bg-green-100 text-green-800'
-                              : 'bg-red-100 text-red-800'
-                          }`}>
-                            {withinTolerance ? 'OK' : 'NOK'}
-                          </span>
-                        )}
-                      </td>
-                      <td className="px-6 py-4 whitespace-nowrap">
-                        <button
-                          onClick={() => onRemoveMeasurement(measurement.id)}
-                          className="text-red-600 hover:text-red-700"
-                        >
-                          <Trash2 size={20} />
-                        </button>
-                      </td>
-                    </tr>
-                  );
-                })}
-              </React.Fragment>
-            ))}
+              );
+            })}
           </tbody>
         </table>
       </div>
