@@ -19,7 +19,6 @@ export type QualityControl = {
   description: string;
   state: 'proto1' | 'proto2' | 'proto3' | 'proto4' | 'sms' | 'size-set' | 'pre-production' | 'production';
   color: string;
-  size: string;
   productTypeId: string;
   controllerId: string;
   measurements: Measurement[];
@@ -30,11 +29,13 @@ export type QualityControl = {
 
 export type Measurement = {
   id: string;
+  code: string; // sigla
   description: string;
   expectedValue: number;
-  actualValue: number;
+  actualValue: number | null;
   tolerance: number;
   unit: string;
+  size: string;
 };
 
 export type Photo = {

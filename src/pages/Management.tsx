@@ -1,7 +1,9 @@
-import React, { useState, useEffect } from 'react';
-import { Plus, Trash2, Edit2, X, Check } from 'lucide-react';
+import React, { useState, useEffect, useRef } from 'react';
+import { Plus, Trash2, Edit2 } from 'lucide-react';
 import { supabase } from '../lib/supabase';
 import type { ProductType, Controller } from '../types';
+import DeleteConfirmation from '../components/DeleteConfirmation';
+import toast from 'react-hot-toast';
 
 function Management() {
   const [activeTab, setActiveTab] = useState<'products' | 'controllers'>('products');
@@ -10,10 +12,35 @@ function Management() {
   const [editingProduct, setEditingProduct] = useState<Partial<ProductType> | null>(null);
   const [editingController, setEditingController] = useState<Partial<Controller> | null>(null);
   const [isLoading, setIsLoading] = useState(true);
+  const [deleteItem, setDeleteItem] = useState<{ id: string; type: 'product' | 'controller' } | null>(null);
+  const fileInputRef = useRef<HTMLInputElement>(null);
+  const [isUploading, setIsUploading] = useState(false);
 
   useEffect(() => {
     loadData();
+    ensureStorageBucket();
   }, []);
+
+  const ensureStorageBucket = async () => {
+    try {
+      const { data: buckets } = await supabase.storage.listBuckets();
+      const productImagesBucket = buckets?.find(b => b.name === 'product-images');
+      
+      if (!productImagesBucket) {
+        const { error } = await supabase.storage.createBucket('product-images', {
+          public: true,
+          fileSizeLimit: 1024 * 1024 * 2 // 2MB limit
+        });
+        
+        if (error) {
+          console.error('Error creating bucket:', error);
+          return;
+        }
+      }
+    } catch (error) {
+      console.error('Error checking storage bucket:', error);
+    }
+  };
 
   const loadData = async () => {
     setIsLoading(true);
@@ -27,6 +54,7 @@ function Management() {
       if (controllers) setControllers(controllers);
     } catch (error) {
       console.error('Error loading data:', error);
+      toast.error('Erro ao carregar dados');
     } finally {
       setIsLoading(false);
     }
@@ -46,8 +74,52 @@ function Management() {
     });
   };
 
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    setIsUploading(true);
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Date.now()}-${Math.random()}.${fileExt}`;
+      
+      const { error: uploadError } = await supabase.storage
+        .from('product-images')
+        .upload(fileName, file, {
+          cacheControl: '3600',
+          upsert: false
+        });
+
+      if (uploadError) throw uploadError;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('product-images')
+        .getPublicUrl(fileName);
+
+      setEditingProduct(prev => ({
+        ...prev,
+        imageUrl: publicUrl
+      }));
+      
+      toast.success('Imagem carregada com sucesso');
+    } catch (error: any) {
+      console.error('Error uploading image:', error);
+      toast.error(error.message || 'Erro ao fazer upload da imagem');
+      
+      // Reset file input
+      if (fileInputRef.current) {
+        fileInputRef.current.value = '';
+      }
+    } finally {
+      setIsUploading(false);
+    }
+  };
+
   const handleSaveProduct = async () => {
-    if (!editingProduct) return;
+    if (!editingProduct?.description) {
+      toast.error('Descrição é obrigatória');
+      return;
+    }
 
     try {
       if (editingProduct.id) {
@@ -73,13 +145,18 @@ function Management() {
 
       await loadData();
       setEditingProduct(null);
+      toast.success('Tipo de peça salvo com sucesso');
     } catch (error) {
       console.error('Error saving product:', error);
+      toast.error('Erro ao salvar tipo de peça');
     }
   };
 
   const handleSaveController = async () => {
-    if (!editingController) return;
+    if (!editingController?.name) {
+      toast.error('Nome é obrigatório');
+      return;
+    }
 
     try {
       if (editingController.id) {
@@ -105,36 +182,51 @@ function Management() {
 
       await loadData();
       setEditingController(null);
+      toast.success('Controlador salvo com sucesso');
     } catch (error) {
       console.error('Error saving controller:', error);
+      toast.error('Erro ao salvar controlador');
     }
   };
 
-  const handleDeleteProduct = async (id: string) => {
+  const handleDelete = async () => {
+    if (!deleteItem) return;
+
     try {
-      const { error } = await supabase
-        .from('product_types')
-        .delete()
-        .eq('id', id);
+      if (deleteItem.type === 'product') {
+        // Delete the image from storage if it exists
+        const product = productTypes.find(p => p.id === deleteItem.id);
+        if (product?.imageUrl) {
+          const fileName = product.imageUrl.split('/').pop();
+          if (fileName) {
+            await supabase.storage
+              .from('product-images')
+              .remove([fileName]);
+          }
+        }
 
-      if (error) throw error;
+        const { error } = await supabase
+          .from('product_types')
+          .delete()
+          .eq('id', deleteItem.id);
+
+        if (error) throw error;
+      } else {
+        const { error } = await supabase
+          .from('controllers')
+          .delete()
+          .eq('id', deleteItem.id);
+
+        if (error) throw error;
+      }
+
       await loadData();
+      toast.success('Item excluído com sucesso');
     } catch (error) {
-      console.error('Error deleting product:', error);
-    }
-  };
-
-  const handleDeleteController = async (id: string) => {
-    try {
-      const { error } = await supabase
-        .from('controllers')
-        .delete()
-        .eq('id', id);
-
-      if (error) throw error;
-      await loadData();
-    } catch (error) {
-      console.error('Error deleting controller:', error);
+      console.error('Error deleting item:', error);
+      toast.error('Erro ao excluir item');
+    } finally {
+      setDeleteItem(null);
     }
   };
 
@@ -202,14 +294,34 @@ function Management() {
                       </div>
                       <div>
                         <label className="block text-sm font-medium text-gray-700">
-                          URL da Imagem
+                          Imagem
                           <input
-                            type="text"
-                            value={editingProduct.imageUrl || ''}
-                            onChange={(e) => setEditingProduct(prev => ({ ...prev, imageUrl: e.target.value }))}
-                            className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+                            type="file"
+                            ref={fileInputRef}
+                            onChange={handleFileUpload}
+                            accept="image/*"
+                            disabled={isUploading}
+                            className="mt-1 block w-full text-sm text-gray-500
+                              file:mr-4 file:py-2 file:px-4
+                              file:rounded-md file:border-0
+                              file:text-sm file:font-semibold
+                              file:bg-blue-50 file:text-blue-700
+                              hover:file:bg-blue-100
+                              disabled:opacity-50 disabled:cursor-not-allowed"
                           />
                         </label>
+                        {isUploading && (
+                          <div className="mt-2 text-sm text-blue-600">
+                            Fazendo upload...
+                          </div>
+                        )}
+                        {editingProduct.imageUrl && (
+                          <img
+                            src={editingProduct.imageUrl}
+                            alt="Preview"
+                            className="mt-2 h-32 w-32 object-cover rounded-md"
+                          />
+                        )}
                       </div>
                     </div>
                     <div className="mt-6 flex justify-end space-x-3">
@@ -221,7 +333,8 @@ function Management() {
                       </button>
                       <button
                         onClick={handleSaveProduct}
-                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700"
+                        disabled={isUploading}
+                        className="px-4 py-2 bg-blue-600 text-white rounded-md text-sm font-medium hover:bg-blue-700 disabled:opacity-50 disabled:cursor-not-allowed"
                       >
                         Salvar
                       </button>
@@ -233,11 +346,13 @@ function Management() {
               <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-6">
                 {productTypes.map((type) => (
                   <div key={type.id} className="border rounded-lg overflow-hidden">
-                    <img
-                      src={type.imageUrl}
-                      alt={type.description}
-                      className="w-full h-48 object-cover"
-                    />
+                    {type.imageUrl && (
+                      <img
+                        src={type.imageUrl}
+                        alt={type.description}
+                        className="w-full h-48 object-cover"
+                      />
+                    )}
                     <div className="p-4">
                       <h3 className="text-lg font-medium text-gray-900">{type.description}</h3>
                       <div className="mt-4 flex space-x-2">
@@ -248,7 +363,7 @@ function Management() {
                           <Edit2 size={20} />
                         </button>
                         <button
-                          onClick={() => handleDeleteProduct(type.id)}
+                          onClick={() => setDeleteItem({ id: type.id, type: 'product' })}
                           className="text-red-600 hover:text-red-700"
                         >
                           <Trash2 size={20} />
@@ -361,7 +476,7 @@ function Management() {
                               <Edit2 size={20} />
                             </button>
                             <button
-                              onClick={() => handleDeleteController(controller.id)}
+                              onClick={() => setDeleteItem({ id: controller.id, type: 'controller' })}
                               className="text-red-600 hover:text-red-700"
                             >
                               <Trash2 size={20} />
@@ -377,6 +492,14 @@ function Management() {
           )}
         </div>
       </div>
+
+      <DeleteConfirmation
+        isOpen={!!deleteItem}
+        onClose={() => setDeleteItem(null)}
+        onConfirm={handleDelete}
+        title={`Excluir ${deleteItem?.type === 'product' ? 'Tipo de Peça' : 'Controlador'}`}
+        message={`Tem certeza que deseja excluir este ${deleteItem?.type === 'product' ? 'tipo de peça' : 'controlador'}? Esta ação não pode ser desfeita.`}
+      />
     </div>
   );
 }

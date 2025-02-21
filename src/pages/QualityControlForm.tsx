@@ -1,41 +1,211 @@
-import React, { useState } from 'react';
-import { useParams } from 'react-router-dom';
+import React, { useState, useEffect } from 'react';
+import { useParams, useNavigate } from 'react-router-dom';
 import { Camera, Upload, Save } from 'lucide-react';
-import type { QualityControl, Measurement, Photo } from '../types';
+import { supabase } from '../lib/supabase';
+import type { QualityControl, Measurement, Photo, ProductType, Controller } from '../types';
+import MeasurementsTable from '../components/MeasurementsTable';
+import ImageMarker from '../components/ImageMarker';
+import toast from 'react-hot-toast';
+import * as XLSX from 'xlsx';
 
 function QualityControlForm() {
   const { id } = useParams();
+  const navigate = useNavigate();
   const isNew = !id;
 
   const [formData, setFormData] = useState<Partial<QualityControl>>({
-    controlRef: '',
     date: new Date().toISOString().split('T')[0],
     modelRef: '',
     brand: '',
     description: '',
     state: 'proto1',
     color: '',
-    size: '',
     productTypeId: '',
     controllerId: '',
-    measurements: [],
-    photos: [],
     observations: '',
     result: null
   });
+
+  const [measurements, setMeasurements] = useState<Measurement[]>([]);
+  const [photos, setPhotos] = useState<Photo[]>([]);
+  const [productTypes, setProductTypes] = useState<ProductType[]>([]);
+  const [controllers, setControllers] = useState<Controller[]>([]);
+  const [isLoading, setIsLoading] = useState(true);
+
+  useEffect(() => {
+    loadData();
+  }, [id]);
+
+  const loadData = async () => {
+    setIsLoading(true);
+    try {
+      // Load product types and controllers
+      const [{ data: types }, { data: controllers }] = await Promise.all([
+        supabase.from('product_types').select('*'),
+        supabase.from('controllers').select('*').eq('active', true)
+      ]);
+
+      if (types) setProductTypes(types);
+      if (controllers) setControllers(controllers);
+
+      // Load quality control data if editing
+      if (id) {
+        const { data: control, error } = await supabase
+          .from('quality_controls')
+          .select(`
+            *,
+            measurements(*),
+            photos(*, photo_markings(*))
+          `)
+          .eq('id', id)
+          .single();
+
+        if (error) throw error;
+        if (control) {
+          setFormData(control);
+          setMeasurements(control.measurements || []);
+          setPhotos(control.photos || []);
+        }
+      }
+    } catch (error) {
+      console.error('Error loading data:', error);
+      toast.error('Erro ao carregar dados');
+    } finally {
+      setIsLoading(false);
+    }
+  };
 
   const handleInputChange = (e: React.ChangeEvent<HTMLInputElement | HTMLTextAreaElement | HTMLSelectElement>) => {
     const { name, value } = e.target;
     setFormData(prev => ({ ...prev, [name]: value }));
   };
 
-  const handleFileUpload = (e: React.ChangeEvent<HTMLInputElement>) => {
-    // Handle Excel file upload for measurements
+  const handleFileUpload = async (e: React.ChangeEvent<HTMLInputElement>) => {
+    const file = e.target.files?.[0];
+    if (!file) return;
+
+    try {
+      const workbook = await file.arrayBuffer().then(buffer => XLSX.read(buffer));
+      const worksheet = workbook.Sheets[workbook.SheetNames[0]];
+      const data = XLSX.utils.sheet_to_json(worksheet);
+
+      const newMeasurements = data.map((row: any) => ({
+        id: Date.now().toString() + Math.random(),
+        code: row['Sigla'],
+        description: row['Descrição'],
+        expectedValue: parseFloat(row['Medida (cm)']),
+        actualValue: null,
+        tolerance: parseFloat(row['Tolerância (%)']),
+        unit: 'cm',
+        size: row['Tamanho']
+      }));
+
+      setMeasurements(prev => [...prev, ...newMeasurements]);
+      toast.success('Medidas importadas com sucesso');
+    } catch (error) {
+      console.error('Error importing measurements:', error);
+      toast.error('Erro ao importar medidas');
+    }
   };
 
-  const handlePhotoCapture = () => {
-    // Handle photo capture
+  const handlePhotoCapture = async (file: File) => {
+    try {
+      const fileExt = file.name.split('.').pop();
+      const fileName = `${Math.random()}.${fileExt}`;
+      const { data, error } = await supabase.storage
+        .from('quality-control-photos')
+        .upload(fileName, file);
+
+      if (error) throw error;
+
+      const { data: { publicUrl } } = supabase.storage
+        .from('quality-control-photos')
+        .getPublicUrl(fileName);
+
+      const newPhoto: Photo = {
+        id: Date.now().toString(),
+        url: publicUrl,
+        description: '',
+        markings: []
+      };
+
+      setPhotos(prev => [...prev, newPhoto]);
+    } catch (error) {
+      console.error('Error uploading photo:', error);
+      toast.error('Erro ao fazer upload da foto');
+    }
   };
+
+  const handleSave = async () => {
+    try {
+      const qualityControlData = {
+        ...formData,
+        controlRef: null // Will be generated by the database
+      };
+
+      let controlId;
+      if (isNew) {
+        const { data, error } = await supabase
+          .from('quality_controls')
+          .insert([qualityControlData])
+          .select()
+          .single();
+
+        if (error) throw error;
+        controlId = data.id;
+      } else {
+        const { error } = await supabase
+          .from('quality_controls')
+          .update(qualityControlData)
+          .eq('id', id);
+
+        if (error) throw error;
+        controlId = id;
+      }
+
+      // Save measurements
+      if (measurements.length > 0) {
+        const measurementsData = measurements.map(m => ({
+          ...m,
+          quality_control_id: controlId
+        }));
+
+        const { error } = await supabase
+          .from('measurements')
+          .upsert(measurementsData);
+
+        if (error) throw error;
+      }
+
+      // Save photos
+      if (photos.length > 0) {
+        const photosData = photos.map(p => ({
+          ...p,
+          quality_control_id: controlId
+        }));
+
+        const { error } = await supabase
+          .from('photos')
+          .upsert(photosData);
+
+        if (error) throw error;
+      }
+
+      toast.success('Controle de qualidade salvo com sucesso');
+      navigate('/');
+    } catch (error) {
+      console.error('Error saving quality control:', error);
+      toast.error('Erro ao salvar controle de qualidade');
+    }
+  };
+
+  if (isLoading) {
+    return (
+      <div className="flex items-center justify-center min-h-screen">
+        <div className="animate-spin rounded-full h-8 w-8 border-b-2 border-blue-600"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="max-w-4xl mx-auto">
@@ -45,18 +215,19 @@ function QualityControlForm() {
 
       <div className="bg-white rounded-lg shadow-md p-6">
         <div className="grid grid-cols-1 md:grid-cols-2 gap-6">
-          <div>
-            <label className="block text-sm font-medium text-gray-700">
-              Ref. Controle
-              <input
-                type="text"
-                name="controlRef"
-                value={formData.controlRef}
-                onChange={handleInputChange}
-                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
-              />
-            </label>
-          </div>
+          {!isNew && (
+            <div>
+              <label className="block text-sm font-medium text-gray-700">
+                Ref. Controle
+                <input
+                  type="text"
+                  value={formData.controlRef || ''}
+                  disabled
+                  className="mt-1 block w-full rounded-md border-gray-300 bg-gray-100 shadow-sm"
+                />
+              </label>
+            </div>
+          )}
 
           <div>
             <label className="block text-sm font-medium text-gray-700">
@@ -97,12 +268,50 @@ function QualityControlForm() {
             </label>
           </div>
 
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Tipo de Peça
+              <select
+                name="productTypeId"
+                value={formData.productTypeId || ''}
+                onChange={handleInputChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              >
+                <option value="">Selecione um tipo</option>
+                {productTypes.map(type => (
+                  <option key={type.id} value={type.id}>
+                    {type.description}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
+          <div>
+            <label className="block text-sm font-medium text-gray-700">
+              Controlador
+              <select
+                name="controllerId"
+                value={formData.controllerId || ''}
+                onChange={handleInputChange}
+                className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
+              >
+                <option value="">Selecione um controlador</option>
+                {controllers.map(controller => (
+                  <option key={controller.id} value={controller.id}>
+                    {controller.name}
+                  </option>
+                ))}
+              </select>
+            </label>
+          </div>
+
           <div className="md:col-span-2">
             <label className="block text-sm font-medium text-gray-700">
               Descrição
               <textarea
                 name="description"
-                value={formData.description}
+                value={formData.description || ''}
                 onChange={handleInputChange}
                 rows={3}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -137,7 +346,7 @@ function QualityControlForm() {
               <input
                 type="text"
                 name="color"
-                value={formData.color}
+                value={formData.color || ''}
                 onChange={handleInputChange}
                 className="mt-1 block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
               />
@@ -147,25 +356,12 @@ function QualityControlForm() {
 
         <div className="mt-8">
           <h2 className="text-lg font-medium text-gray-900 mb-4">Medidas</h2>
-          <div className="flex items-center space-x-4">
-            <button
-              type="button"
-              onClick={() => document.getElementById('excel-upload')?.click()}
-              className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
-            >
-              <Upload size={20} />
-              <span>Importar Excel</span>
-            </button>
-            <input
-              id="excel-upload"
-              type="file"
-              accept=".xlsx,.xls"
-              onChange={handleFileUpload}
-              className="hidden"
-            />
-          </div>
-
-          {/* Measurements table will go here */}
+          <MeasurementsTable
+            measurements={measurements}
+            onAddMeasurement={(measurement) => setMeasurements(prev => [...prev, measurement])}
+            onRemoveMeasurement={(id) => setMeasurements(prev => prev.filter(m => m.id !== id))}
+            onUpdateMeasurement={(id, data) => setMeasurements(prev => prev.map(m => m.id === id ? { ...m, ...data } : m))}
+          />
         </div>
 
         <div className="mt-8">
@@ -173,22 +369,55 @@ function QualityControlForm() {
           <div className="flex items-center space-x-4">
             <button
               type="button"
-              onClick={handlePhotoCapture}
+              onClick={() => document.getElementById('photo-upload')?.click()}
               className="flex items-center space-x-2 px-4 py-2 border border-gray-300 rounded-md shadow-sm text-sm font-medium text-gray-700 bg-white hover:bg-gray-50"
             >
               <Camera size={20} />
-              <span>Capturar Foto</span>
+              <span>Adicionar Foto</span>
             </button>
+            <input
+              id="photo-upload"
+              type="file"
+              accept="image/*"
+              onChange={(e) => {
+                const file = e.target.files?.[0];
+                if (file) handlePhotoCapture(file);
+              }}
+              className="hidden"
+            />
           </div>
 
-          {/* Photo gallery will go here */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-4">
+            {photos.map((photo) => (
+              <div key={photo.id} className="border rounded-lg p-4">
+                <ImageMarker
+                  imageUrl={photo .url}
+                  marks={photo.markings}
+                  onAddMark={(mark) => {
+                    setPhotos(prev => prev.map(p => 
+                      p.id === photo.id 
+                        ? { ...p, markings: [...p.markings, mark] }
+                        : p
+                    ));
+                  }}
+                  onRemoveMark={(markId) => {
+                    setPhotos(prev => prev.map(p => 
+                      p.id === photo.id 
+                        ? { ...p, markings: p.markings.filter(m => m.id !== markId) }
+                        : p
+                    ));
+                  }}
+                />
+              </div>
+            ))}
+          </div>
         </div>
 
         <div className="mt-8">
           <h2 className="text-lg font-medium text-gray-900 mb-4">Observações</h2>
           <textarea
             name="observations"
-            value={formData.observations}
+            value={formData.observations || ''}
             onChange={handleInputChange}
             rows={4}
             className="block w-full rounded-md border-gray-300 shadow-sm focus:border-blue-500 focus:ring-blue-500"
@@ -198,6 +427,7 @@ function QualityControlForm() {
         <div className="mt-8 flex justify-end">
           <button
             type="button"
+            onClick={handleSave}
             className="flex items-center space-x-2 px-6 py-3 bg-blue-600 text-white rounded-md hover:bg-blue-700"
           >
             <Save size={20} />
