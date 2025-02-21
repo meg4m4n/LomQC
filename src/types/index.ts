@@ -32,10 +32,10 @@ export type Measurement = {
   code: string; // sigla
   description: string;
   expectedValue: number;
-  actualValue: number | null;
+  actualValues: { [size: string]: number | null };
   tolerance: number;
   unit: string;
-  size: string;
+  sizes: string[];
 };
 
 export type Photo = {

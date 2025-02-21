@@ -94,10 +94,10 @@ function QualityControlForm() {
         code: row['Sigla'],
         description: row['Descrição'],
         expectedValue: parseFloat(row['Medida (cm)']),
-        actualValue: null,
+        actualValues: {},
         tolerance: parseFloat(row['Tolerância (%)']),
         unit: 'cm',
-        size: row['Tamanho']
+        sizes: ['P']
       }));
 
       setMeasurements(prev => [...prev, ...newMeasurements]);
@@ -208,7 +208,7 @@ function QualityControlForm() {
   }
 
   return (
-    <div className="max-w-4xl mx-auto">
+    <div className="max-w-7xl mx-auto">
       <h1 className="text-2xl font-bold text-gray-800 mb-6">
         {isNew ? 'Novo Controle de Qualidade' : 'Editar Controle de Qualidade'}
       </h1>
@@ -391,7 +391,7 @@ function QualityControlForm() {
             {photos.map((photo) => (
               <div key={photo.id} className="border rounded-lg p-4">
                 <ImageMarker
-                  imageUrl={photo .url}
+                  imageUrl={photo.url}
                   marks={photo.markings}
                   onAddMark={(mark) => {
                     setPhotos(prev => prev.map(p => 
